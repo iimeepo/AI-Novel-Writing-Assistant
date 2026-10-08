@@ -13,15 +13,21 @@ RUN rm -rf /app/* /app/.[!.]* /app/..?* || true
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json .npmrc ./
 COPY client/package.json ./client/package.json
 COPY shared/package.json ./shared/package.json
+# vite.config.ts 构建时读取 desktop/package.json 注入 VITE_APP_VERSION，需一并拷入。
+COPY desktop/package.json ./desktop/package.json
 RUN pnpm install --frozen-lockfile --filter @ai-novel/shared --filter @ai-novel/client
 
 FROM deps AS build
 WORKDIR /app
+# tsc --noEmit + vite 构建需要较大堆，默认 3072MB（小内存机器请同时配好 swap）。
+ARG NODE_MAX_OLD_SPACE_MB=3072
+ENV NODE_OPTIONS=--max-old-space-size=${NODE_MAX_OLD_SPACE_MB}
 ARG VITE_API_BASE_URL=
 ENV VITE_API_BASE_URL=${VITE_API_BASE_URL}
 COPY shared/package.json shared/tsconfig.json ./shared/
 COPY shared/*.ts ./shared/
 COPY shared/types ./shared/types
+COPY shared/utils ./shared/utils
 COPY client/package.json client/tsconfig.json client/vite.config.ts client/tailwind.config.ts client/postcss.config.js client/components.json client/index.html ./client/
 COPY client/public ./client/public
 COPY client/src ./client/src

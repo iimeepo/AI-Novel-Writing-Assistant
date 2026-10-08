@@ -20,10 +20,15 @@ RUN pnpm install --frozen-lockfile
 
 FROM deps AS build
 WORKDIR /app
-ENV AI_NOVEL_DATABASE_MODE=postgresql
+# 生产采用 SQLite-in-Docker，Prisma Client 需按 sqlite schema 生成。
+ENV AI_NOVEL_DATABASE_MODE=sqlite
+# tsc 编译整个后端需要较大堆，默认 3072MB（小内存机器请同时配好 swap）。
+ARG NODE_MAX_OLD_SPACE_MB=3072
+ENV NODE_OPTIONS=--max-old-space-size=${NODE_MAX_OLD_SPACE_MB}
 COPY shared/package.json shared/tsconfig.json ./shared/
 COPY shared/*.ts ./shared/
 COPY shared/types ./shared/types
+COPY shared/utils ./shared/utils
 COPY server/package.json server/tsconfig.json server/prisma.config.ts ./server/
 COPY server/src ./server/src
 RUN pnpm --filter @ai-novel/shared build \
@@ -40,7 +45,8 @@ COPY shared/package.json ./shared/package.json
 COPY server/prisma.config.ts ./server/prisma.config.ts
 COPY server/src/config/database.ts ./server/src/config/database.ts
 COPY server/src/prisma ./server/src/prisma
-ENV AI_NOVEL_DATABASE_MODE=postgresql
+# 与 build 阶段一致：SQLite 模式下生成 sqlite 客户端。
+ENV AI_NOVEL_DATABASE_MODE=sqlite
 RUN pnpm install --frozen-lockfile \
     && pnpm --filter @ai-novel/server prisma:generate
 
@@ -55,7 +61,7 @@ COPY --from=build --chown=node:node /app/pnpm-workspace.yaml ./pnpm-workspace.ya
 COPY --from=prod-deps --chown=node:node /app/node_modules ./node_modules
 COPY --from=build --chown=node:node /app/server ./server
 COPY --from=build --chown=node:node /app/shared ./shared
-RUN mkdir -p /app/storage/generated-images /app/node_modules/.bin \
+RUN mkdir -p /app/storage/generated-images /app/storage/db /app/node_modules/.bin \
     && printf '%s\n' '#!/bin/sh' 'exec node /app/server/node_modules/prisma/build/index.js --config /app/server/prisma.config.ts "$@"' > /app/node_modules/.bin/prisma \
     && chmod +x /app/node_modules/.bin/prisma \
     && chown -R node:node /app/storage /app/node_modules/.bin/prisma

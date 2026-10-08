@@ -1,0 +1,92 @@
+name: ai-novel
+
+# 说明：
+# - 请在 infra/ 目录下执行 docker compose 命令（compose 项目目录即 infra/）。
+# - build.context 使用仓库根（..），因为 Dockerfile.api / Dockerfile.web 从根 COPY 工作区文件。
+# - 所有配置读取 infra/.env（由 .env.production.example 复制生成）：既作为容器 env_file，也提供 ${...} 变量插值。
+# - 数据库采用 SQLite-in-Docker：数据文件在 db_storage 卷内，无独立数据库容器。
+# - qdrant 不映射公网端口，仅在容器网络内可达；web 通过 nginx 反代 /api 到 api:3000，同源规避 CORS。
+# - 宿主机对外端口统一使用 9100-9199 段（避开宝塔 nginx 的 80/443 及其他项目的端口）；容器内部端口保持不变。
+# - 宿主机（宝塔）只需把 web 的 127.0.0.1:9100 反向代理出去并做 SSL。
+
+services:
+  qdrant:
+    image: qdrant/qdrant:v1.15.4
+    restart: unless-stopped
+    volumes:
+      - qdrant_storage:/qdrant/storage
+    # 向量库默认不对外暴露；如需宿主机调试（9100-9199）：
+    # ports:
+    #   - "127.0.0.1:9103:6333"
+
+  # 一次性任务：在 api 启动前把 Prisma 基础表结构部署到 PostgreSQL。
+  migrate:
+    build:
+      context: ..
+      dockerfile: Dockerfile.api
+    image: ai-novel-api:local
+    restart: "no"
+    command:
+      [
+        "node_modules/.bin/prisma",
+        "migrate",
+        "deploy",
+        "--config",
+        "/app/server/prisma.config.ts",
+      ]
+    env_file:
+      - .env
+    environment:
+      AI_NOVEL_DATABASE_MODE: sqlite
+      DATABASE_URL: file:/app/storage/db/ai_novel.db
+      NODE_ENV: production
+    volumes:
+      - db_storage:/app/storage/db
+
+  api:
+    build:
+      context: ..
+      dockerfile: Dockerfile.api
+    image: ai-novel-api:local
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      AI_NOVEL_DATABASE_MODE: sqlite
+      DATABASE_URL: file:/app/storage/db/ai_novel.db
+      NODE_ENV: production
+      PORT: "3000"
+      HOST: 0.0.0.0
+      QDRANT_URL: http://qdrant:6333
+      IMAGE_STORAGE_ROOT: /app/storage/generated-images
+    volumes:
+      - api_storage:/app/storage/generated-images
+      - db_storage:/app/storage/db
+    # api 由 web 容器内部反代访问，默认不映射公网端口。
+    # 如需在宿主机直接调 API（9100-9199）：
+    # ports:
+    #   - "127.0.0.1:9101:3000"
+    depends_on:
+      qdrant:
+        condition: service_started
+      migrate:
+        condition: service_completed_successfully
+
+  web:
+    build:
+      context: ..
+      dockerfile: Dockerfile.web
+      args:
+        # 走 web 容器内 nginx 的同域反代（/api -> api:3000），因此前端构建期使用相对路径。
+        VITE_API_BASE_URL: /api
+    image: ai-novel-web:local
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:9100:8080"
+    depends_on:
+      - api
+
+volumes:
+  db_storage:
+  qdrant_storage:
+  api_storage:

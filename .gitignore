@@ -9,6 +9,8 @@ client/.env
 client/.env.local
 server/.env
 server/.env.local
+infra/.env
+infra/.env.local
 server/dev.db
 server/dev.db-shm
 server/dev.db-wal
@@ -22,6 +24,7 @@ server/tmp/**/*.sqlite-*
 server/storage/
 server/src/prisma/dev.db
 server/src/prisma/dev.db-journal
+.vscode/
 .history/
 .histyory/
 .logs/
